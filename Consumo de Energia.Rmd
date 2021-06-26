@@ -1,0 +1,459 @@
+---
+title: "Consumo de Energia"
+author: "Graziele Umbelina Alves Ferreira"
+date: "Junho 2021"
+output:
+  html_document:
+    toc: true
+    number_sections: yes
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(error = TRUE)
+```
+
+```{r packages, include=FALSE}
+library(knitr)
+library(readxl)
+library(reshape)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(tidyr)
+library(forecast)
+library(ggcorrplot)
+library(grid)
+library(gridExtra)
+library(lattice)
+library(xts)
+library(BETS)
+library(caret)
+require(lmtest)
+```
+
+```{r data, include=FALSE, cache=TRUE}
+
+# Importação da base de dados
+Energia <- read_excel("Bases_Final_ADS_Jun2021.xlsx", sheet = "dados")
+
+```
+
+
+# Introdução
+
+O presente relatório consiste em analisar a evolução do consumo mensal de energia no Brasil, por regiões, setores e possíveis fatores associados.
+
+
+# Dataset
+A base de dados `Energia` é composta por informações que incluem o Consumo de Energia (Gwh), comercial, industrial e residencial, por cada uma das 05 regiões brasileiras, no período de Janeiro de 2004 a Fevereiro 2021, bem como variáveis referentes às Pesquisas Mensais do Comércio Restrita e Ampliada, Temperaturas Máxima e Mínima e Produção Industrial, por região, disponibilizadas pelo IBGE, e ainda Renda Real, População Ocupada e Massa de Rendimento Real, disponibilizadas pela PNAD, bem como a quantidade de dias úteis em cada mês de observação.
+
+A seguir, é possível visualizar a estrutura do banco da base de dados:
+
+``` {r, message = FALSE} 
+str(Energia)
+```
+
+# Consumo Mensal de Energia
+
+O gráfico do consumo mensal de energia, em Gwh, construído a seguir, fornece uma consolidação para cada segmento, estratificado por região brasileira, a partir de 2004.
+
+``` {r plot_energ_segm_regiao, cache=TRUE, warning=FALSE, fig.width = 10, fig.align = "center", fig.cap = "Figura 1: Consumo de Energia (Gwh) em cada setor, por região brasileira."}
+
+  # Estruturação do dataset no formato long, a partir do filtro de variáveis associadas ao consumo de energia
+    Energia_long <- Energia %>%
+      select(starts_with(c("com", "ind", "res")), data_tidy) %>%
+      gather(segmento, consumo, starts_with(c("com", "ind", "res"))) %>%
+      mutate(regiao = str_sub(segmento, 5, 7), segmento = str_sub(segmento, 1, 3)) %>%
+      select(data_tidy, regiao, segmento, consumo)
+
+  # Plot do consumo de energia em cada segmento, estratificado por região
+  ggplot(data = Energia_long,
+         aes(x=data_tidy, y = consumo, colour = regiao)) +
+    geom_line() +
+    facet_wrap(~segmento) +
+  labs(
+    x = "", y = "Consumo de Energia Mensal (Gwh)"
+  )
+
+```
+
+De um modo geral, observa-se tendência crescente, com variações sazonais, no consumo de energia em todas as regiões. A exceção a essa percepção é observada no consumo de energia industrial nas regiões Sudeste e Sul. Ainda nesse setor, observou-se dois vales um pouco mais acentuados em 2008 e 2021. Outro vale foi detectado no consumo de energia no setor do comércio, porém, apenas em 2021. Na região Nordeste, perceebe-se uma tendência mais acentuada no crescimento do consumo de energia residencial a partir de 2012, mesmo período em que observou-se a queda no consumo de energia industrial.
+
+
+Para uma melhor investigação de fatores que podem estar associados a essas variações, apresenta-se, a seguir, um gráfico que mede as associações entre o consumo de energia por setor e demais variáveis, como temperaturas mínima e máxima, pesquisa do comércio restrita e ampliada, renda real, massa real, população ocupada e quantidade de dias úteis no período. Os valores das correlações foram omitidos para evitar poluição visual nos gráficos.
+
+
+``` {r split_reg, cache=TRUE, warning=FALSE}
+
+  # Split das regiões
+  co <- Energia %>% 
+    select(ends_with("co"), data_tidy, du, renda_r, pop_ocup_br, massa_r) %>%
+    mutate(regiao = "co") %>%
+    rename(com = com_co, ind = ind_co, res = res_co, pmc_a = pmc_a_co,temp_max = temp_max_co,
+           temp_min = temp_min_co, pmc_r = pmc_r_co, pim = pim_co) %>%
+    select(data_tidy, regiao, everything())
+  n <- Energia %>% 
+    select(ends_with("n"), data_tidy, du, renda_r, pop_ocup_br, massa_r) %>%
+    mutate(regiao = "n") %>%
+    rename(com = com_n, ind = ind_n, res = res_n, pmc_a = pmc_a_n,temp_max = temp_max_n,
+           temp_min = temp_min_n, pmc_r = pmc_r_n, pim = pim_n) %>%
+    select(data_tidy, regiao, everything())
+  ne <- Energia %>% 
+    select(ends_with("ne"), data_tidy, du, renda_r, pop_ocup_br, massa_r) %>%
+    mutate(regiao = "ne") %>%
+    rename(com = com_ne, ind = ind_ne, res = res_ne, pmc_a = pmc_a_ne,temp_max = temp_max_ne,
+           temp_min = temp_min_ne, pmc_r = pmc_r_ne, pim = pim_ne) %>%
+    select(data_tidy, regiao, everything())
+  s <- Energia %>% 
+    select(ends_with("s"), data_tidy, du, renda_r, pop_ocup_br, massa_r) %>%
+    mutate(regiao = "s") %>%
+    rename(com = com_s, ind = ind_s, res = res_s, pmc_a = pmc_a_s,temp_max = temp_max_s,
+           temp_min = temp_min_s, pmc_r = pmc_r_s, pim = pim_s) %>%
+    select(data_tidy, regiao, everything())
+  se <- Energia %>% 
+    select(ends_with("se"), data_tidy, du, renda_r, pop_ocup_br, massa_r) %>%
+    mutate(regiao = "se") %>%
+    rename(com = com_se, ind = ind_se, res = res_se, pmc_a = pmc_a_se,temp_max = temp_max_se,
+           temp_min = temp_min_se, pmc_r = pmc_r_se, pim = pim_se) %>%
+    select(data_tidy, regiao, everything())
+  # Energia_long <- rbind.data.frame(co, n, ne, s, se)
+
+```
+
+``` {r plot_cor_regiao, cache=TRUE, warning=FALSE, fig.width = 10, fig.height = 10, fig.align = "center", fig.cap = "Figura 2: Associações entre Consumo de Energia (Gwh) e demais variáveis, por região brasileira."}
+
+  # Plot de associações entre demais variáveis por região
+      p0 <- textGrob("Associações entre variáveis por região")
+      p1 <- ggcorrplot(cor(subset(co, select = -c(data_tidy, regiao)), use = "pairwise.complete.obs"),
+                   type = "lower", lab = FALSE) +
+        labs(title = "Centro-oeste")
+      p2 <- ggcorrplot(cor(subset(n, select = -c(data_tidy, regiao)), use = "pairwise.complete.obs"),
+                 type = "lower", lab = FALSE) +
+        labs(title = "Norte")
+      p3 <- ggcorrplot(cor(subset(ne, select = -c(data_tidy, regiao)), use = "pairwise.complete.obs"),
+                 type = "lower", lab = FALSE) +
+        labs(title = "Nordeste")
+      p4 <- ggcorrplot(cor(subset(s, select = -c(data_tidy, regiao)), use = "pairwise.complete.obs"),
+                 type = "lower", lab = FALSE) +
+        labs(title = "Sul")
+      p5 <- ggcorrplot(cor(subset(se, select = -c(data_tidy, regiao)), use = "pairwise.complete.obs"),
+                 type = "lower", lab = FALSE) +
+        labs(title = "Sudeste")
+      
+      grid.arrange(p0, p1, p2, p3, p4, p5, nrow=3, ncol=2)
+      
+```
+
+Embora, na Figura 1, tenha-se observado que há uma tendência crescente no consumo de energia em quase todos os setores por região, percebe-se, no diagrama de correlação da Figura 2, que a presença e a intensidade das associaçoes entre as variáveis analisadas se difere bastante por região.
+
+Enquanto nas regiões Sul, Centro-oeste e Norte há evidências de uma associação positiva entre o consumo de energia comercial e industrial, por exemplo, enquanto na região Sudeste essa associação não é observada e na Região Nordeste chega a ser negativa. O mesmo se pode dizer entre a comparação do consumo de energia residencial e industrial.
+
+Os detalhes entre demais associações, por região, não serão detalhadas neste relatório. No entanto, não se pode deixar de perceber que a estrutura da organização de cada região, em termos de densidade demográfica, desenvolvimento do comércio e da produção impactam diretamente no consumo de energia por cada setor.
+
+
+## Consumo de Energia Industrial da Região Sudeste
+
+O comportamento da evolução do consumo de energia industrial na região Sudeste destaca-se entre as demais regiões e setores por seu comportamento peculiar.
+
+Havia uma tendência de crescimento até por volta de 2008, quando observou-se um vale acentuado, provavelmente devido à crise econômica mundial observada nesse período.
+
+
+Para modelar o consumo de energia industrial na região Sudeste, optou-se por utilizar a base de dados original com filtro, eliminando-se variáveis que se referem apenas a outras regiões. A base de dados simplificada foi denominada `se` e será utilizada para realização dos modelos de projeção. A seguir, pode-se visualizar um extrato do gráfico apresentado na Figura 1, para melhor observação do comportamento do consumo de energia industrial na região Sudeste:
+
+``` {r plot_ind_se, warning=FALSE, message=FALSE, fig.align = "center", fig.cap = "Figura 3: Consumo de Energia Industrial na Região Sudeste"}
+
+# Plot consumo de energia industrial na região Sudeste
+  ggplot(data = se, aes(x=data_tidy, y=ind)) +
+         geom_line() +
+  labs(
+    x = "",
+    y = "Consumo Mensal (Gwh)"
+  )
+
+```
+
+Observando o gráfico da evolução do consumo de energia industrial da região Sudeste, percebe-se períodos de tendência alternados. Além disos, as oscilações de picos e vales podem estar relacionadas às estações do ano, períodos de férias, feriados, etc. Essas oscilações ocorrem anualmente, o que leva a acreditar que há presença de sazonalidade.
+
+Nesse sentido, pode-se levar as seguintes hipóteses:
+
+- Tendência: há momentos de tendência crescente e decrescente no consumo de energia, com vales mais acentuados nos perídos em torno dos anos de 2008 e 2021, coerente com as crises econômicas observadas nesses períodos;
+
+- Variância: não parece haver aumento na variação entre os meses ao longo do período observado; e
+
+- Sazonalidade: verifica-se algum comportamento sazonal no consumo de energia.
+
+Essa análise gráfica permite uma inspeção inicial do consumo de energia industrial na região Sudeste. Mas é importante testar esses parâmetros levantados para entender um pouco mais sobre o comportamento da série.
+
+
+Para a criação dos modelos, é necessários transformar o data frame `Energia_se_ind` em um formato de série temporal, já considerando o período em que temos a última informação disponível da variável que se deseja realizar previsões, a saber fev/2021:
+
+``` {r serie_formato}
+# Consumo de energia industrial da região Sudeste até fev/2021
+Energia_se_ind_filter <- filter(se, data_tidy <= as.POSIXct("2021-02-01", tz="UTC"))
+# Transformação do data.frame em formato xts
+Energia_se_ind_ts <- xts(Energia_se_ind_filter[, !names(Energia_se_ind_filter) %in% c("data_tidy", "regiao")],
+                         order.by = as.POSIXct(Energia_se_ind_filter$data_tidy))
+
+```
+
+A seguir, pode-de visaulizar um gráfico de decomposição da série:
+
+
+```{r plot_decomp, fig.align = "center", fig.cap = "Figura 4: Decomposição da série - Consumo de Energia Industrial na Região Sudeste"}
+
+# Plot da decompsição da série
+plot(decompose(ts(Energia_se_ind_ts$ind, frequency=12)))
+
+```
+
+
+É importante avaliar ainda a associação entre demais variáveis disponíveis com o consumo de energia industrial, possibilitando um olhar mais apurado do que foi visualizado na Figura 2:
+
+
+```{r plot_corr, fig.align = "center", fig.cap = "Figura 4: Associações entre as variáveis da região Sudeste e nacionais"}
+
+      ggcorrplot(cor(subset(se, select = -c(data_tidy, regiao)), use = "pairwise.complete.obs"),
+                 type = "lower", lab = TRUE) +
+        labs(title = "Sudeste")
+
+```
+
+A matriz de correlação sugere associação positiva do consumo de energia industrial na região Sudeteste com sua respectiva produção industrial e associação negativa com a renda real e a massa de rendimento real no Brasil.
+
+No entanto, ainda não é possível detectar o padrão dessa associação. Dessa forma, opta-se por realizar um gráfico de dispersão entre o consumo de energia industrial e essas variáveis que apresentaram correlação mais evidente.
+
+```{r plot_disp, warning=FALSE, message=FALSE, fig.align = "center", fig.cap = "Figura 5: Associações entre o Consumo de Energia na Região Sudeste e Produção Industrial na Região, e Renda e Massa Real no Brasil"}
+
+d1 <- ggplot(data = se, aes(x = ind, y = pim)) +
+             geom_point() +
+      labs(
+        x = "",
+        y = "Produção Industrial")
+d2 <- ggplot(data = se, aes(x = ind, y = renda_r)) +
+             geom_point() +
+      labs(
+        x = "",
+        y = "Renda Real (Brasil)")
+d3 <- ggplot(data = se, aes(x = ind, y = massa_r)) +
+             geom_point() +
+      labs(
+        x = "",
+        y = "Massa de Rendimento Real (Brasil)")
+grid.arrange(d1, d2, d3, nrow=1, ncol=3)
+
+```
+
+
+Aparentemente, a associação do consumo de energia industrial com essas três variáveis preditoras parece apresentar uma relação linear. No entanto, é importante observar que os dados de Renda Real e Massa de Rendimento Real só estão disponíveis a partir de março/2012.
+
+Essa análise preliminar permite identificar possíveis características que podem ser utilizadas para compor o modelo de previsão do consumo de energia industrial.
+
+
+### Modelos de Projeção
+
+Para estimar o consumo de energia industrial na região Sudeste nos próximos 24 meses, serão ajustados modelos de séries temporais e em seguida, avaliados o que melhor se adequa de acordo com o contexto e a qualidade dos ajustes. Importante destacar que as variáveis de consumo de energia, a qual se pretende predizer, está disponível até fevereiro/2021, e, portanto, a previsão será de março/2021 a fevereiro/2023. Por outro lado, já se tem disponível a previsão/cálculo das demais variáveis até dezembro/2022.
+
+É importante destacar que o histórico do consumo de energia pode ser utilizado na identificação de possível tendência, sazonalidade ou ciclos. Além disso, não se pode considerar a independência entre as observações.
+
+Os modelos estatísticos de séries temporais utilizam o passado histórico para projetar observações futuras. O consumo de energia em julho, por exemplo, pode estar associado ao consumo de agosto, que por sua vez por estar associado ao consumo de junho e assim por diante.
+Nesse contexto, a autocorrelação é definida como uma observação num determinado período está relacionada às observações anteriores.
+
+Diversos modelos são disponíveis para essa análise: NAIVE, Média Móvel, Suaviação Exponencial Simples e Suavização Exponencial de Holt, Suavização Exponencial de Holt-Winters e Box & Jenkins (que permite a inclusão de variáveis associadas) e ainda, os diversos modelos de Machine Learning.
+
+O gráfico da evolução do consumo de energia sugere ciclos de crescimento e decrescimento, bem como a presença de sazonalidade, o que permite direcionar a atenção para modelos que levem em consideração essas características.
+
+
+
+#### Modelo 01: NAIVE
+
+O modelo NAIVE, também conhecido como modelo ingênuo, é o modelo mais simples de previsões para uma série temporal. Sua previsão consiste basicamente ao valor da última observacão ou, quando há sazonalidade, a previsão de uma observação para a mesma época do valor futuro ou seja, para uma série com sazonalidade mensal por exemplo, a previsão para janeiro é igual ao valor observado no último mês de janeiro disponível.
+
+``` {r naive, warning = FALSE}
+
+# Naive sem sazonalidade
+fit.naive <- naive(Energia_se_ind_ts$ind, h=24)
+summary(fit.naive)
+# Plot das previsões
+plot(fit.naive)
+
+```
+
+
+#### Modelo 02: Suavização Exponencial
+
+De forma geral, os modelos de suavização assumem que os valores extremos da série representam a aleatoriedade. Eles podem ser úteis, em séries como a que está sendo analisada, em que há evidências da presença de quebras estruturais.
+
+Há vários modelos de Suavização Exponencial disponíveis para se fazer previsões. Aqui, vamos tratar dos modelos de suavização exponencial simples e com a presença de tendência:
+
+1. Suavização Exponencial Simples (SES): ausência de tendência e sazonalidade
+
+``` {r fit.ses, warnings = FALSE}
+fit.hwses <- HoltWinters(Energia_se_ind_ts$ind, beta = FALSE, gamma = FALSE)
+fit.hwses
+# Plot das previsões
+autoplot(forecast(fit.hwses, h=24))
+```
+
+2. Suavização Exponencial de Holt (SEH): presença de tendência, mas ausência de sazonalidade
+
+``` {r fit.tend, warnings = FALSE}
+fit.hw_tend <- HoltWinters(Energia_se_ind_ts$ind, gamma = FALSE)
+fit.hw_tend
+# Plot das previsões
+autoplot(forecast(fit.hw_tend, h=24))
+```
+
+
+#### Modelo 3: Arima Box e Jenkins (sem covariáveis)
+
+Para os modelos anteriores, temos a pressuposição de que os processos estocásticos são estacionários, ou seja, média e variância são constantes ao longo do tempo e sua autocovariância depende apenas da ordem de defasagem.
+
+No entanto, ao observamos a série, vimos que essa pressuposição não parece ser atendida, já que tanto a variação quanto o padrão da variação não são constantes ao longo do tempo, o que sugere que o consumo de energia industrial na região Sudeste não tem um comportamento estacionário.
+
+Dessa forma, o modelo ARIMA é uma alternativa para lidar com essa característica.
+
+``` {r fit_arima, warnings = FALSE}
+
+# Modelo Arima
+fit.arima <- auto.arima(Energia_se_ind_ts$ind, seasonal = TRUE)
+summary(fit.arima)
+# Plot das previsões
+autoplot(forecast(fit.arima, h = 24))
+# Teste dos parâmetros
+coeftest(fit.arima)
+
+```
+
+
+
+#### Modelo 4: Arima Box e Jenkins (com covariáveis)
+
+Os modelos de Box e Jenkins podem incorporar variáveis auxiliares para tentar melhorar o poder de predição dos modelos, nos casos em que a variável em que se deseja realizar previsões são correlacionadas com outras.
+
+Já foi identificado que o consumo de energia industrial na região Sudeste apresenta correlação média a forte com as variáveis de produção industrial na região Sudeste e renda real e massa real nacionais.
+
+
+``` {r calc_pred, warning = FALSE, echo = FALSE}
+
+# Variáveis preditoras para ajuste do modelo
+var_matrix <- se %>%
+  filter(data_tidy <= as.POSIXct("2021-02-01", tz="UTC")) %>%
+  select(pim, renda_r, massa_r)
+var_matrix <- as.matrix(var_matrix)
+# Valores das variáveis preditoras a serem utilizados na previsão
+fcast_pred <- se %>%
+  filter(data_tidy > as.POSIXct("2021-02-01", tz="UTC")) %>%
+  select(pim, renda_r, massa_r)
+fcast_pred <- as.matrix(fcast_pred)
+
+```
+
+``` {r fit_bj1, warning = FALSE}
+
+# Ajuste do modelo
+fit.bj1 <- auto.arima(Energia_se_ind_ts$ind, xreg = var_matrix)
+# Previsões
+fcast_bj1 <- forecast(fit.bj1, xreg = fcast_pred, h = 24)
+autoplot(fcast_bj1)
+summary(fcast_bj1)
+# Teste de significância dos parâmetros
+coeftest(fit.bj1)
+
+```
+
+
+O teste de significância dos parâmetros do modelo indicou que as variáveis Renda Real e Massa Real não contribuem para a explicação do consumo de energia. Portanto, podemos considerar um modelo mais parcimonioso, que não inclua essas variáveis para o ajuste.
+
+``` {r fit_bj2, warning = FALSE}
+
+# Ajuste do modelo
+fit.bj2 <- auto.arima(Energia_se_ind_ts$ind, xreg = Energia_se_ind_ts$pim)
+# Previsões
+fcast_bj2 <- forecast(fit.bj2, xreg = fcast_pred[,1], h = 24)
+autoplot(fcast_bj2)
+summary(fcast_bj2)
+# Teste de significância dos parâmetros
+coeftest(fit.bj2)
+
+```
+
+O modelo apenas com a variável "pim" indicou que um aumento de 246.340 na região Sudeste, impacta no acréscimo de 1 Gwh no consumo de energia industrial na mesma região.
+
+
+#### Modelo 5: Machine Learning
+
+A estatística clássica dispõe de muitos modelos para análise de séries temporais. Mas, paralelamente, tem-se observado o aumento na utilização de modelos de Machine Learning, impulsionado pelos resultados obtidos por empresas como Google, Facebook, Amazon, Netflix e Apple.
+
+Dentro dessa classe de ajustes, dezenas de modelos estão disponíveis, mas por ora, não serão abordados, embora seja possível que os resultados de tais métodos sejam competitivos, em relação aos modelos clássicos apresentados.
+
+``` {r comp_ts, include = FALSE, eval=FALSE, echo = FALSE, warning = FALSE}
+Energia_se_ind_comp_ts <- Energia_se_ind_ts[index(Energia_se_ind_ts) >= as.POSIXct("2012-03-01", tz="UTC")]
+str(Energia_se_ind_comp_ts)
+```
+
+
+``` {r fit_ml, include = FALSE, eval = FALSE, echo = FALSE, warning = FALSE, message = FALSE}
+
+# Randon Forest (RF)
+# rfFitTime <- train(ind ~ pim + renda_r + massa_r,
+#                        data = Energia_se_ind_comp_ts,
+#                        method = "rf",
+#                        metric = "ROC",
+#                        trControl=trainControl(method='repeatedcv', number=10, repeats=10)
+#                  )
+
+```
+
+
+#### Comparação entre os modelos
+
+A seguintes medidas de acurácia são utilizadas para realizar a comparação entre modelos:
+
+ME: Mean Error
+RMSE: Root Mean Squared Error
+MAE: Mean Absolute Error
+MPE: Mean Percentage Error
+MAPE: Mean Absolute Percentage Error
+MASE: Mean Absolute Scaled Error
+ACF1: Autocorrelation of errors at lag 1.
+
+A seguir, tem-se as medidas calculadas para os modelos clássicos:
+
+``` {r acuracias}
+
+  # Modelo Naive (sem sazonalidade)
+    accuracy(fit.naive)    
+
+  # Modelo de Suavização Exponencial Holt-Winters
+    accuracy(forecast(fit.hwses))
+    accuracy(forecast(fit.hw_tend))
+    
+  # Modelo Arima (sem covariáveis)
+    accuracy(fit.arima)
+
+  # Modelo Arima (com covariáveis)
+    accuracy(fit.bj1)
+    accuracy(fit.bj2)
+
+```
+
+Dentre os modelos analisados, o que apresentou os menores erros o Arima Box e Jeninks com as covariáveis associadas.
+
+Uma análise mais minuciosa, poderia dividir a base de dados em treino e teste para uma melhor comparação em termos de ajuste dos modelos e acurácia.
+
+
+# Conclusões
+
+No gráfico apresentado na Figura 1, visualiza-se a evolução do consumo de energia (Gwh) por segmento e região. A região Sudeste é responsável pelo maior consumo em todos os seguimentos, enquanto a região Norte apresenta o menor consumo de energia comercial e residencial, mas superar o consumo de energia industrial da região Centro-oeste, fatores possivelmente justificados por ser uma região menos populosa. Além disso, percebe-se algum indício de sazonalidade em todos segmentos e regiões.
+
+Alguns fatores chamam a atenção:
+
+1. Queda no consumo de energia industrial, possivelmente pelo impacto das crises financeiras de 2008 e 2021;
+2. Queda no consumo de energia comercial, provavelmente impactada pelo fechamento do comércio na crise de 2021;
+3. O descolamento das curvas do consumo industrial e residencial das regiões Nordeste e Sul. Observa-se uma tendência de aumento do consumo de energia industrial na região Sul e queda na região Nordeste a partir de 2012. Além disso, no mesmo período, observou-se uma tendência mais acentuada elevação do consumo de energia residencial na região Nordeste do que na região Sul.
+
+Em relação ao consumo de energia industrial da região Sudeste, cuja série desejou-se realizar previsões para os próximos dois anos, há evidências da presença do que denominamos de "Quebra Estrutural", que corrobora a hipótese de que determinado fato tenha mudado a estrutura de determinada variável. Mais importante do que inferir a hipótese de quebra é o conhecimento do contexto.
+
+Uma análise mais minuciosa poderia incluir nos modelos avaliados padrões de sazonalidade, estratificação da base de dados em versões treino/teste, avaliação de quebras estruturais e outros componentes da série, análise/teste de resíduos e ainda ajuste de modelos de Machine Learning.
+
+O Consumo de Energia Industrial na região Sudeste requer mais atenção na análise e aplicabilidade de técnicas do que as demais regiões e setores avaliados, por seu comportamento peculiar e mais sensível a fatores econômicos.
